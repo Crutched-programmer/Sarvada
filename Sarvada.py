@@ -27,6 +27,10 @@ defaults = {
     "cli_mode":        False,
     "memory_summary":  "",
     "last_summarised": 0,
+    "search_query":      "",
+    "translate_results":  {},
+    "msg_translations":   {},
+    "show_tr_picker":     {},
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -428,11 +432,22 @@ def call_sarvam_chat(api_key, model, messages_payload, max_tokens, temperature):
     r.raise_for_status()
     return r.json()
 
+import re
+
+def strip_tags(text: str) -> str:
+    # Remove <think>...</think> blocks entirely (including content)
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    # Remove all remaining HTML/XML tags
+    text = re.sub(r'<[^>]+>', ' ', text)
+    # Clean up extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
 def call_sarvam_tts(api_key, text, lang_code="en-IN"):
     r = requests.post(
         "https://api.sarvam.ai/text-to-speech",
         headers={"api-subscription-key": api_key, "Content-Type": "application/json"},
-        json={"text": text[:2500], "target_language_code": lang_code,
+        json={"text": strip_tags(text)[:2500], "target_language_code": lang_code,   
               "speaker": "shubh", "model": "bulbul:v3"},
         timeout=30,
     )
@@ -483,6 +498,23 @@ def summarise_memory(api_key, messages):
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
+
+def call_sarvam_translate(api_key, text, source_lang, target_lang):
+    r = requests.post(
+        "https://api.sarvam.ai/translate",
+        headers={"api-subscription-key": api_key, "Content-Type": "application/json"},
+        json={
+            "input": text[:1000],
+            "source_language_code": source_lang,
+            "target_language_code": target_lang,
+            "speaker_gender": "Male",
+            "mode": "formal",
+            "enable_preprocessing": True,
+        },
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json().get("translated_text", "")
 
 # ─── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -559,7 +591,7 @@ if st.session_state.show_settings:
         with sc3: stream_mode = st.toggle("STREAMING", value=True,   key="stream_t")
         with sc4: tts_enabled = st.toggle("AUTO TEXT-TO-SPEECH", value=True,  key="tts_t")
 
-        tts_lang = st.selectbox("TTS LANGUAGE", list(LANG_CODES.keys()), key="tts_l")
+        tts_lang = st.selectbox("TTS LANGUAGE", list(LANG_CODES.keys()), index=list(LANG_CODES.keys()).index("Hindi"), key="tts_l")
         stt_lang = st.selectbox("MIC LANGUAGE", list(LANG_CODES.keys()), key="stt_l")
 
     with col_r:
@@ -628,13 +660,13 @@ temperature   = st.session_state.get("temp_s",   0.7)
 max_tokens    = st.session_state.get("tok_s",    1024)
 stream_mode   = st.session_state.get("stream_t", True)
 tts_enabled   = st.session_state.get("tts_t",    True)
-tts_lang      = st.session_state.get("tts_l",    "English")
+tts_lang      = st.session_state.get("tts_l",    "Hindi")
 stt_lang      = st.session_state.get("stt_l",    "English")
 mem_auto      = st.session_state.get("mem_auto", True)
 
 # ─── TABS ──────────────────────────────────────────────────────────────────────
-tab_chat, tab_memory, tab_voice, tab_upload, tab_stats, tab_favs = st.tabs([
-    "💬  CHAT", "🧠  MEMORY", "🎤  VOICE", "📁  UPLOAD", "📊  STATS", "⭐  FAVS"
+tab_chat, tab_memory, tab_translate, tab_search, tab_voice, tab_upload, tab_stats, tab_favs = st.tabs([
+    "💬  CHAT", "🧠  MEMORY", "🌐  TRANSLATE", "🔍  SEARCH", "🎤  VOICE", "📁  UPLOAD", "📊  STATS", "⭐  FAVS"
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -674,26 +706,106 @@ with tab_chat:
                         st.markdown(f"<div class='cli-prompt'>user@sarvam:~$</div>", unsafe_allow_html=True)
                     st.markdown(msg["content"], unsafe_allow_html=True)
             else:
-                
                 with st.chat_message("assistant", avatar="🤖"):
                     if CLI:
-                          st.markdown(f"<div class='cli-prompt'>&gt;&gt; sarvam-m output:</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='cli-prompt'>&gt;&gt; sarvam-m output:</div>", unsafe_allow_html=True)
+
+                    # ── ENGLISH (original) ──────────────────────────────────
                     st.markdown(msg["content"].replace("\\n", "\n"), unsafe_allow_html=True)
-              
-                    b1, b2, _ = st.columns([1, 1, 8])
-                    with b1:
-                        if st.button("⭐", key=f"fav_{idx}", help="Save"):
+
+                    # Action buttons row for English
+                    eb1, eb2, eb3, _ = st.columns([1, 1, 1, 7])
+                    with eb1:
+                        if st.button("⭐", key=f"fav_{idx}", help="Save to favourites"):
                             if msg["content"] not in st.session_state.favourites:
                                 st.session_state.favourites.append(msg["content"])
                                 st.toast("Saved!", icon="⭐")
-                    with b2:
+                    with eb2:
                         if api_key and st.button("🔊", key=f"tts_{idx}", help="Read aloud"):
-                            with st.spinner("generating audio..."):
+                            with st.spinner(""):
                                 try:
                                     ab = call_sarvam_tts(api_key, msg["content"], LANG_CODES.get(tts_lang, "en-IN"))
                                     if ab: st.session_state.tts_audio = ab; st.rerun()
                                 except Exception as e:
                                     st.error(f"TTS: {e}")
+                    with eb3:
+                        tr_open = st.session_state.show_tr_picker.get(idx, False)
+                        if st.button("🌐", key=f"tr_open_{idx}", help="Translate"):
+                            st.session_state.show_tr_picker[idx] = not tr_open
+                            st.rerun()
+
+                    # ── TRANSLATE LANGUAGE PICKER ───────────────────────────
+                    if st.session_state.show_tr_picker.get(idx, False):
+                        pk1, pk2, pk3 = st.columns([2, 1, 1])
+                        with pk1:
+                            pick_lang = st.selectbox(
+                                "translate to",
+                                [l for l in LANG_CODES.keys() if l != "English"],
+                                key=f"tr_pick_{idx}",
+                                label_visibility="collapsed",
+                            )
+                        with pk2:
+                            if st.button("GO", key=f"tr_go_{idx}", use_container_width=True):
+                                if not api_key:
+                                    st.warning("add api key first")
+                                else:
+                                    with st.spinner(f"translating to {pick_lang}..."):
+                                        try:
+                                            translated = call_sarvam_translate(
+                                                api_key,
+                                                strip_tags(msg["content"]),
+                                                "en-IN",
+                                                LANG_CODES[pick_lang],
+                                            )
+                                            st.session_state.msg_translations[idx] = {
+                                                "lang": pick_lang,
+                                                "text": translated,
+                                            }
+                                            st.session_state.show_tr_picker[idx] = False
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"translate error: {e}")
+                        with pk3:
+                            if st.button("✕", key=f"tr_close_{idx}", use_container_width=True):
+                                st.session_state.show_tr_picker[idx] = False
+                                st.rerun()
+
+                    # ── TRANSLATED VERSION (if exists) ──────────────────────
+                    if idx in st.session_state.msg_translations:
+                        tr = st.session_state.msg_translations[idx]
+                        st.markdown(f"""
+                        <div style='background:#0f0f0f;border:1px solid #1e1e1e;
+                                    border-left:3px solid {A};border-radius:12px;
+                                    padding:14px 16px;margin-top:8px;'>
+                            <div style='font-size:10px;color:#444;letter-spacing:0.06em;margin-bottom:8px;'>
+                                🌐 {tr["lang"].upper()}
+                            </div>
+                            <div style='font-size:14px;color:#e8e8e8;line-height:1.7;'>
+                                {tr["text"]}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # Action buttons row for translated version
+                        tb1, tb2, tb3, _ = st.columns([1, 1, 1, 7])
+                        with tb1:
+                            if st.button("⭐", key=f"fav_tr_{idx}", help="Save translation"):
+                                if tr["text"] not in st.session_state.favourites:
+                                    st.session_state.favourites.append(tr["text"])
+                                    st.toast("Saved!", icon="⭐")
+                        with tb2:
+                            if api_key and st.button("🔊", key=f"tts_tr_{idx}", help="Read translation"):
+                                with st.spinner(""):
+                                    try:
+                                        ab = call_sarvam_tts(api_key, tr["text"], LANG_CODES[tr["lang"]])
+                                        if ab: st.session_state.tts_audio = ab; st.rerun()
+                                    except Exception as e:
+                                        st.error(f"TTS: {e}")
+                        with tb3:
+                            if st.button("🌐", key=f"tr_again_{idx}", help="Translate again"):
+                                st.session_state.show_tr_picker[idx] = True
+                                del st.session_state.msg_translations[idx]
+                                st.rerun()
 
     if st.session_state.tts_audio:
         autoplay_audio(st.session_state.tts_audio)
@@ -842,7 +954,122 @@ with tab_memory:
     </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — VOICE
+# TAB 3 — TRANSLATE
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_translate:
+    st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// TRANSLATE' if CLI else '🌐  TRANSLATE MESSAGE'}</div>", unsafe_allow_html=True)
+    st.divider()
+
+    tr_col1, tr_col2 = st.columns(2)
+    with tr_col1:
+        tr_source = st.selectbox("FROM", list(LANG_CODES.keys()), index=0, key="tr_src")
+    with tr_col2:
+        tr_target = st.selectbox("TO",   list(LANG_CODES.keys()), index=1, key="tr_tgt")
+
+    tr_text = st.text_area("TEXT TO TRANSLATE", height=120, placeholder="type or paste text here...", key="tr_input")
+
+    if st.button("🌐 TRANSLATE", use_container_width=True, key="do_translate"):
+        if not api_key:
+            st.warning("⚠️ add api key in sidebar")
+        elif not tr_text.strip():
+            st.warning("enter some text first")
+        else:
+            with st.spinner("translating..."):
+                try:
+                    result = call_sarvam_translate(
+                        api_key, tr_text,
+                        LANG_CODES[tr_source],
+                        LANG_CODES[tr_target],
+                    )
+                    st.session_state.translate_results["last"] = {
+                        "original": tr_text,
+                        "translated": result,
+                        "from": tr_source,
+                        "to": tr_target,
+                    }
+                except Exception as e:
+                    st.error(f"translate error: {e}")
+
+    if st.session_state.translate_results.get("last"):
+        res = st.session_state.translate_results["last"]
+        st.divider()
+        st.markdown(f"<div style='font-size:10px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>{res['from'].upper()} → {res['to'].upper()}</div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style='background:#0f0f0f;border:1px solid #1e1e1e;border-radius:12px;padding:16px;font-size:14px;line-height:1.7;color:#e8e8e8;'>
+            {res['translated']}
+        </div>
+        """, unsafe_allow_html=True)
+        tr_c1, tr_c2 = st.columns(2)
+        with tr_c1:
+            if st.button("SEND TO CHAT →", use_container_width=True, key="tr_send"):
+                st.session_state.messages.append({"role": "user", "content": res["translated"]})
+                st.session_state.total_messages += 1
+                st.success("sent! switch to 💬 CHAT")
+        with tr_c2:
+            if api_key and st.button("🔊 SPEAK", use_container_width=True, key="tr_tts"):
+                with st.spinner("generating audio..."):
+                    try:
+                        ab = call_sarvam_tts(api_key, res["translated"], LANG_CODES[res["to"]])
+                        if ab:
+                            st.session_state.tts_audio = ab
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"TTS: {e}")
+
+    st.divider()
+    st.markdown("<div style='font-size:10px;color:#222;line-height:1.8;'>translate any message from chat → use it in conversation or hear it spoken</div>", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — SEARCH
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_search:
+    st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// SEARCH CHAT' if CLI else '🔍  SEARCH CHAT HISTORY'}</div>", unsafe_allow_html=True)
+    st.divider()
+
+    search_q = st.text_input("SEARCH TERM", placeholder="search messages...", key="search_input")
+
+    if search_q.strip():
+        hits = [
+            (i, m) for i, m in enumerate(st.session_state.messages)
+            if search_q.lower() in m["content"].lower()
+        ]
+        st.markdown(f"<div style='font-size:10px;color:#444;letter-spacing:0.06em;margin-bottom:12px;'>{len(hits)} result(s) for '{search_q}'</div>", unsafe_allow_html=True)
+
+        if not hits:
+            st.markdown("<div style='color:#222;font-size:12px;padding:20px 0;'>nothing found</div>", unsafe_allow_html=True)
+        else:
+            for idx, msg in hits:
+                role_label = "YOU" if msg["role"] == "user" else "ASSISTANT"
+                # Highlight search term
+                raw = strip_tags(msg["content"])
+                highlighted = raw.replace(
+                    search_q,
+                    f"<mark style='background:{A};color:#000;padding:0 2px;border-radius:3px;'>{search_q}</mark>"
+                )
+                # Case-insensitive highlight
+                import re as _re
+                highlighted = _re.sub(
+                    f"({_re.escape(search_q)})",
+                    f"<mark style='background:{A};color:#000;padding:0 2px;border-radius:3px;'>\1</mark>",
+                    raw, flags=_re.IGNORECASE
+                )
+                st.markdown(f"""
+                <div style='background:#0f0f0f;border:1px solid #1e1e1e;border-radius:12px;
+                            padding:12px 16px;margin-bottom:10px;'>
+                    <div style='font-size:10px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>
+                        MSG #{idx+1} · {role_label}
+                    </div>
+                    <div style='font-size:13px;color:#e8e8e8;line-height:1.6;'>
+                        {highlighted[:400]}{"..." if len(raw) > 400 else ""}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        total = len(st.session_state.messages)
+        st.markdown(f"<div style='color:#222;font-size:12px;padding:10px 0;'>{total} messages in history — type to search</div>", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — VOICE
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_voice:
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// VOICE INPUT' if CLI else '🎤  VOICE INPUT'}</div>", unsafe_allow_html=True)
@@ -874,7 +1101,7 @@ with tab_voice:
             st.success("sent! switch to 💬 CHAT tab")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — UPLOAD
+# TAB 6 — UPLOAD
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_upload:
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// FILE UPLOAD' if CLI else '📁  FILE & IMAGE UPLOAD'}</div>", unsafe_allow_html=True)
@@ -906,7 +1133,7 @@ with tab_upload:
                 st.success("attached! switch to 💬 CHAT")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — STATS
+# TAB 7 — STATS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_stats:
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// STATS' if CLI else '📊  SESSION STATS'}</div>", unsafe_allow_html=True)
@@ -946,7 +1173,7 @@ with tab_stats:
         st.markdown("<div style='color:#1e1e1e;font-size:12px;padding:30px 0;'>no data yet</div>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 6 — FAVOURITES
+# TAB 8 — FAVOURITES
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_favs:
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// FAVOURITES' if CLI else '⭐  SAVED RESPONSES'}</div>", unsafe_allow_html=True)
