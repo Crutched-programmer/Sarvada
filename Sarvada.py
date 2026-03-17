@@ -38,6 +38,8 @@ defaults = {
     "session_counter":    0,           # auto-increment for new session ids
     # ── Feature 16: Inline command state ──
     "cmd_result":         None,        # stores result of last inline command
+    "active_tab":         "chat",      # current nav tab
+    "sidebar_collapsed":  False,       # icon-only mode
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -123,10 +125,10 @@ AT2 = tint_bg(A, 0.18)
 CLI = st.session_state.cli_mode
 
 # ─── DYNAMIC CSS ───────────────────────────────────────────────────────────────
-FONT         = "'Courier New', monospace" if CLI else "'IBM Plex Mono', monospace"
-MSG_RADIUS   = "4px"  if CLI else "16px"
-BTN_RADIUS   = "4px"  if CLI else "24px"
-INPUT_RADIUS = "4px"  if CLI else "24px"
+FONT         = "'Consolas', monospace" if CLI else "'IBM Plex Mono', monospace"
+MSG_RADIUS   = "4px"  if CLI else "24px"
+BTN_RADIUS   = "4px"  if CLI else "8px"
+INPUT_RADIUS = "4px"  if CLI else "8px"
 
 st.markdown(f"""
 <style>
@@ -490,6 +492,50 @@ audio {{
     margin-bottom: 8px;
     text-transform: uppercase;
 }}
+/* ── ICON NAV SIDEBAR ── */
+.nav-sidebar {{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 0;
+}}
+.nav-item {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    color: #444;
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-decoration: none;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    overflow: hidden;
+}}
+.nav-item:hover {{ background: #1a1a1a; color: #888; }}
+.nav-item.active {{ background: {AT}; border-color: {AT2}; color: {AL}; }}
+.nav-item .nav-icon {{ font-size: 1.1rem; flex-shrink: 0; }}
+.nav-item .nav-label {{ font-size: 11px; letter-spacing: 0.06em; }}
+
+.nav-divider {{ height: 1px; background: #1a1a1a; margin: 8px 0; }}
+
+.session-pill {{
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px; border-radius: 8px;
+    background: #0f0f0f; border: 1px solid #1a1a1a;
+    font-size: 10px; color: #444; letter-spacing: 0.04em;
+    transition: border-color 0.15s; cursor: pointer;
+    margin-bottom: 3px;
+}}
+.session-pill.active {{ border-color: {A}; color: {AL}; }}
+.session-pill:hover {{ border-color: #2a2a2a; }}
+
+/* main content gets left padding since sidebar is custom */
+.main-content {{ padding-left: 0; }}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -786,187 +832,140 @@ def handle_inline_command(cmd, args, api_key, tts_lang):
     return {"type": "error", "label": "UNKNOWN COMMAND",
             "content": f"Unknown command <code>{cmd}</code>. Type <code>/help</code> for a list."}
 
-# ─── SIDEBAR ───────────────────────────────────────────────────────────────────
+# ─── ICON SIDEBAR NAV ──────────────────────────────────────────────────────────
+NAV_ITEMS = [
+    ("chat",      "💬", "CHAT"),
+    ("memory",    "🧠", "MEMORY"),
+    ("translate", "🌐", "TRANSLATE"),
+    ("search",    "🔍", "SEARCH"),
+    ("voice",     "🎤", "VOICE"),
+    ("upload",    "📁", "UPLOAD"),
+    ("stats",     "📊", "STATS"),
+    ("favs",      "⭐", "FAVS"),
+    ("templates", "📋", "TEMPLATES"),
+    ("settings",  "⚙️", "SETTINGS"),
+]
+
 with st.sidebar:
-    st.markdown(f"""
-    <div style='padding:8px 0 4px 0;'>
-        <div style='font-size:1rem;font-weight:600;color:{A};letter-spacing:0.1em;'>
-            {">>> SARVAM AGENT" if CLI else "SARVAM AGENT"}
-        </div>
-        <div style='font-size:10px;color:#333;margin-top:2px;letter-spacing:0.06em;'>
-            {"[CLI MODE ACTIVE]" if CLI else "powered by sarvam ai"}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.divider()
+    collapsed = st.session_state.sidebar_collapsed
 
-    api_key = st.text_input("API KEY", type="password", placeholder="paste key here...")
-    model   = st.selectbox("MODEL", ["sarvam-m"])
-
-    st.divider()
-
-    # ── SETTINGS POPOUT BUTTON ──
-    btn_label = "[ ⚙ SETTINGS ]" if CLI else "⚙️ Settings"
-    if st.button(btn_label, use_container_width=True, key="toggle_settings"):
-        st.session_state.show_settings = not st.session_state.show_settings
-
-    st.divider()
-
-    # ── FEATURE 10: CHAT SESSIONS PANEL ────────────────────────────────────────
-    st.markdown(f"<div style='font-size:10px;color:#444;letter-spacing:0.08em;margin-bottom:8px;'>{'// SESSIONS' if CLI else 'CHAT SESSIONS'}</div>", unsafe_allow_html=True)
-
-    # New session button
-    ns_col1, ns_col2 = st.columns([3, 1])
-    with ns_col1:
-        new_name = st.text_input("", placeholder="session name...", key="new_sess_name",
-                                  label_visibility="collapsed")
-    with ns_col2:
-        if st.button("＋", key="add_session", help="New session"):
-            save_current_session()
-            sid = new_session(new_name.strip() if new_name.strip() else None)
-            switch_session(sid)
-            st.rerun()
-
-    # List existing sessions
-    for sid, sess in list(st.session_state.sessions.items()):
-        is_active = (sid == st.session_state.active_session)
-        border_col = A if is_active else "#1a1a1a"
-        name_display = sess["name"]
-        msg_count    = len(sess["messages"])
-
-        sc1, sc2 = st.columns([5, 1])
-        with sc1:
-            if st.button(
-                f"{'▶ ' if is_active else ''}{name_display} ({msg_count})",
-                key=f"sess_btn_{sid}",
-                use_container_width=True,
-                help=f"Switch to {name_display}",
-            ):
-                if not is_active:
-                    save_current_session()
-                    switch_session(sid)
-                    st.rerun()
-        with sc2:
-            if len(st.session_state.sessions) > 1:
-                if st.button("✕", key=f"del_sess_{sid}", help="Delete session"):
-                    if is_active:
-                        # Switch to another session first
-                        other = [k for k in st.session_state.sessions if k != sid]
-                        if other:
-                            switch_session(other[0])
-                    del st.session_state.sessions[sid]
-                    st.rerun()
-
-    st.divider()
-
-    c1, c2 = st.columns(2)
-    with c1: st.metric("MSGS",  st.session_state.total_messages)
-    with c2: st.metric("TURNS", len(st.session_state.messages) // 2)
-
-    if st.session_state.token_history:
-        st.metric("LAST TOK", st.session_state.token_history[-1]["Tokens"])
-
-    st.divider()
-
-    if st.button("NEW CHAT" if not CLI else "[ NEW CHAT ]", use_container_width=True):
-        st.session_state.messages        = []
-        st.session_state.token_history   = []
-        st.session_state.tts_audio       = None
-        st.session_state.memory_summary  = ""
-        st.session_state.last_summarised = 0
-        st.session_state.total_messages  = 0
-        save_current_session()
-        st.rerun()
-
-    if st.session_state.messages:
-        chat_export = "\n\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.messages])
-        st.download_button("EXPORT CHAT", data=chat_export, file_name="chat.txt", mime="text/plain", use_container_width=True)
-
-    if st.session_state.favourites:
-        fav_export = "\n\n---\n\n".join(st.session_state.favourites)
-        st.download_button("EXPORT FAVS ⭐", data=fav_export, file_name="favs.txt", mime="text/plain", use_container_width=True)
-
-    st.divider()
-    st.caption(f"{'ibm plex mono' if not CLI else 'courier new'} · {A}")
-
-# ─── SETTINGS MODAL ────────────────────────────────────────────────────────────
-if st.session_state.show_settings:
-    st.markdown(f"<div class='settings-panel'>", unsafe_allow_html=True)
-    st.markdown(f"<div class='settings-title'>{'// SETTINGS' if CLI else '⚙️  Settings'}</div>", unsafe_allow_html=True)
-
-    col_l, col_r = st.columns([1.2, 1])
-
-    with col_l:
-        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>SYSTEM PROMPT PRESET</div>", unsafe_allow_html=True)
-        preset_choice = st.selectbox("PRESET", list(PRESET_PROMPTS.keys()), label_visibility="collapsed", key="preset_sel")
-        system_prompt = st.text_area("SYSTEM PROMPT", value=PRESET_PROMPTS[preset_choice], height=80, key="sys_prompt_input")
-
-        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin:12px 0 6px 0;'>GENERATION</div>", unsafe_allow_html=True)
-        sc1, sc2 = st.columns(2)
-        with sc1: temperature = st.slider("TEMP", 0.0, 1.0, 0.7, 0.05, key="temp_s")
-        with sc2: max_tokens  = st.select_slider("TOKENS", [256, 512, 1024, 2048], value=1024, key="tok_s")
-
-        sc3, sc4 = st.columns(2)
-        with sc3: stream_mode = st.toggle("STREAMING",         value=True, key="stream_t")
-        with sc4: tts_enabled = st.toggle("AUTO TEXT-TO-SPEECH", value=True, key="tts_t")
-
-        tts_lang = st.selectbox("TTS LANGUAGE", list(LANG_CODES.keys()), index=list(LANG_CODES.keys()).index("Hindi"), key="tts_l")
-        stt_lang = st.selectbox("MIC LANGUAGE", list(LANG_CODES.keys()), key="stt_l")
-
-    with col_r:
-        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>ACCENT COLOUR</div>", unsafe_allow_html=True)
-
-        swatch_html = "<div class='swatch-row'>"
-        for hex_val, name in ACCENT_PRESETS:
-            border = f"border-color:{hex_val}" if hex_val == st.session_state.accent else "border-color:#222"
-            swatch_html += f"<div class='swatch' style='background:{hex_val};{border};' title='{name}'></div>"
-        swatch_html += "</div>"
-        st.markdown(swatch_html, unsafe_allow_html=True)
-
-        swatch_cols = st.columns(len(ACCENT_PRESETS))
-        for i, (hex_val, name) in enumerate(ACCENT_PRESETS):
-            with swatch_cols[i]:
-                if st.button("●", key=f"sw_{i}", help=name):
-                    st.session_state.accent = hex_val
-                    st.rerun()
-
-        custom_col = st.text_input("CUSTOM HEX", value=st.session_state.accent, key="custom_hex", max_chars=7)
-        if st.button("APPLY COLOUR", key="apply_colour"):
-            if custom_col and custom_col.startswith("#") and len(custom_col) == 7:
-                st.session_state.accent = custom_col
-                st.rerun()
-            else:
-                st.error("enter a valid hex like #a1b2c3")
-
-        st.divider()
-
-        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>INTERFACE MODE</div>", unsafe_allow_html=True)
-        cli_toggle = st.toggle("⌨️ CLI MODE", value=st.session_state.cli_mode, key="cli_toggle")
-        if cli_toggle != st.session_state.cli_mode:
-            st.session_state.cli_mode = cli_toggle
-            st.rerun()
-
-        if CLI:
+    # ── TOP: logo + collapse toggle ──────────────────────────────────────────
+    logo_col, toggle_col = st.columns([3, 1])
+    with logo_col:
+        if not collapsed:
             st.markdown(f"""
-            <div style='font-size:10px;color:#333;margin-top:8px;letter-spacing:0.05em;line-height:1.8;'>
-                root@sarvam:~$<br>&gt; monospace font<br>&gt; sharp corners<br>
-                &gt; uppercase labels<br>&gt; terminal aesthetic
-            </div>""", unsafe_allow_html=True)
-
-        st.divider()
-        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>MEMORY</div>", unsafe_allow_html=True)
-        mem_auto = st.toggle("AUTO SUMMARISE every 10 turns", value=True, key="mem_auto")
-
-    close_col, _ = st.columns([1, 4])
-    with close_col:
-        if st.button("✕ CLOSE SETTINGS", key="close_settings"):
-            st.session_state.show_settings = False
+            <div style='padding:4px 0;'>
+                <div style='font-size:0.9rem;font-weight:600;color:{A};letter-spacing:0.1em;'>
+                    {">>> SARVAM" if CLI else "SARVAM AGENT"}
+                </div>
+                <div style='font-size:9px;color:#333;letter-spacing:0.06em;margin-top:1px;'>
+                    {"[CLI MODE]" if CLI else "powered by sarvam ai"}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='font-size:1.2rem;text-align:center;color:{A};padding:4px 0;'>✦</div>", unsafe_allow_html=True)
+    with toggle_col:
+        if st.button("◀" if not collapsed else "▶", key="collapse_btn", help="Toggle sidebar"):
+            st.session_state.sidebar_collapsed = not collapsed
             st.rerun()
 
-    st.markdown("</div>", unsafe_allow_html=True)
     st.divider()
 
-# Pull settings with safe fallbacks
+    # ── NAV ITEMS ────────────────────────────────────────────────────────────
+    for tab_id, icon, label in NAV_ITEMS:
+        is_active = st.session_state.active_tab == tab_id
+        active_class = "active" if is_active else ""
+        if collapsed:
+            btn_label = icon
+        else:
+            btn_label = f"{icon}  {label}"
+
+        if st.button(
+            btn_label,
+            key=f"nav_{tab_id}",
+            use_container_width=True,
+            help=label if collapsed else None,
+        ):
+            st.session_state.active_tab = tab_id
+            st.rerun()
+
+    st.divider()
+
+    # ── SESSIONS (only when expanded) ───────────────────────────────────────
+    if not collapsed:
+        st.markdown(f"<div style='font-size:9px;color:#333;letter-spacing:0.08em;margin-bottom:6px;'>SESSIONS</div>", unsafe_allow_html=True)
+        ns_c1, ns_c2 = st.columns([3, 1])
+        with ns_c1:
+            new_name = st.text_input("", placeholder="new session...", key="new_sess_name", label_visibility="collapsed")
+        with ns_c2:
+            if st.button("＋", key="add_session"):
+                save_current_session()
+                sid = new_session(new_name.strip() if new_name.strip() else None)
+                switch_session(sid)
+                st.rerun()
+
+        for sid, sess in list(st.session_state.sessions.items()):
+            is_active = (sid == st.session_state.active_session)
+            sc1, sc2 = st.columns([5, 1])
+            with sc1:
+                label_txt = f"{'▶ ' if is_active else ''}{sess['name']} ({len(sess['messages'])})"
+                if st.button(label_txt, key=f"sess_{sid}", use_container_width=True):
+                    if not is_active:
+                        save_current_session(); switch_session(sid); st.rerun()
+            with sc2:
+                if len(st.session_state.sessions) > 1:
+                    if st.button("✕", key=f"del_s_{sid}"):
+                        if is_active:
+                            other = [k for k in st.session_state.sessions if k != sid]
+                            if other: switch_session(other[0])
+                        del st.session_state.sessions[sid]; st.rerun()
+
+    else:
+        # Collapsed — just show session count badge
+        n_sess = len(st.session_state.sessions)
+        st.markdown(f"<div style='text-align:center;font-size:10px;color:#333;'>{n_sess} sess</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # ── QUICK STATS (collapsed = minimal, expanded = full) ───────────────────
+    if not collapsed:
+        c1, c2 = st.columns(2)
+        with c1: st.metric("MSGS",  st.session_state.total_messages)
+        with c2: st.metric("TURNS", len(st.session_state.messages) // 2)
+        if st.session_state.token_history:
+            st.metric("LAST TOK", st.session_state.token_history[-1]["Tokens"])
+        st.divider()
+
+        if st.button("NEW CHAT", use_container_width=True, key="new_chat_btn"):
+            st.session_state.messages        = []
+            st.session_state.token_history   = []
+            st.session_state.tts_audio       = None
+            st.session_state.memory_summary  = ""
+            st.session_state.last_summarised = 0
+            st.session_state.total_messages  = 0
+            save_current_session(); st.rerun()
+
+        if st.session_state.messages:
+            chat_export = "\n\n".join([f"{m['role'].upper()}: {m['content']}" for m in st.session_state.messages])
+            st.download_button("EXPORT CHAT", data=chat_export, file_name="chat.txt", mime="text/plain", use_container_width=True)
+        if st.session_state.favourites:
+            fav_export = "\n\n---\n\n".join(st.session_state.favourites)
+            st.download_button("EXPORT FAVS ⭐", data=fav_export, file_name="favs.txt", mime="text/plain", use_container_width=True)
+
+        st.divider()
+        st.caption(f"{'courier new' if CLI else 'ibm plex mono'} · {A}")
+    else:
+        if st.button("🗑️", key="new_chat_icon", help="New Chat"):
+            st.session_state.messages        = []
+            st.session_state.token_history   = []
+            st.session_state.tts_audio       = None
+            st.session_state.memory_summary  = ""
+            st.session_state.last_summarised = 0
+            st.session_state.total_messages  = 0
+            save_current_session(); st.rerun()
+
+# ─── PULL SETTINGS ─────────────────────────────────────────────────────────────
 DEFAULT_PROMPT = PRESET_PROMPTS["🤖 Default"]
 system_prompt = st.session_state.get("sys_prompt_input") or DEFAULT_PROMPT
 temperature   = st.session_state.get("temp_s",   0.7)
@@ -976,17 +975,17 @@ tts_enabled   = st.session_state.get("tts_t",    True)
 tts_lang      = st.session_state.get("tts_l",    "Hindi")
 stt_lang      = st.session_state.get("stt_l",    "English")
 mem_auto      = st.session_state.get("mem_auto", True)
+api_key       = st.session_state.get("api_key_input", "")
+model         = "sarvam-m"
 
-# ─── TABS ──────────────────────────────────────────────────────────────────────
-tab_chat, tab_memory, tab_translate, tab_search, tab_voice, tab_upload, tab_stats, tab_favs, tab_templates = st.tabs([
-    "💬  CHAT", "🧠  MEMORY", "🌐  TRANSLATE", "🔍  SEARCH",
-    "🎤  VOICE", "📁  UPLOAD", "📊  STATS", "⭐  FAVS", "📋  TEMPLATES"
-])
+# ─── ACTIVE TAB ROUTING ────────────────────────────────────────────────────────
+active = st.session_state.active_tab
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — CHAT
+# CHAT
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_chat:
+if active == 'chat':
 
     # Active session badge
     cur_sess_name = st.session_state.sessions.get(st.session_state.active_session, {}).get("name", "")
@@ -1021,7 +1020,7 @@ with tab_chat:
                 {prefix}{"what do you need?" if not CLI else "SARVAM_AGENT v1.0 — READY"}
             </div>
             <div style='color:#2a2a2a;font-size:11px;margin-top:6px;letter-spacing:0.04em;'>
-                {"add api key in sidebar → pick a prompt or type below" if not CLI else "[add api key] → [type command below]"}
+                {"click ⚙️ Settings in the sidebar → paste api key → type below" if not CLI else "[add api key] → [type command below]"}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1152,7 +1151,7 @@ with tab_chat:
 
     if prompt := st.chat_input("message... or /help for commands" if not CLI else "root@sarvam:~$ ", key="chat_input"):
         if not api_key:
-            st.warning("⚠️ paste your api key in the sidebar first")
+            st.warning("⚠️ go to ⚙️ Settings in the sidebar and paste your api key")
             st.stop()
 
         # ── FEATURE 16: Check for inline command ───────────────────────────
@@ -1253,9 +1252,9 @@ with tab_chat:
             st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — MEMORY
+# MEMORY
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_memory:
+elif active == 'memory':
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// MEMORY' if CLI else '🧠  CONVERSATION MEMORY'}</div>", unsafe_allow_html=True)
     st.divider()
 
@@ -1298,10 +1297,7 @@ with tab_memory:
         auto-summarise triggers every 10 turns if enabled in settings
     </div>""", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — TRANSLATE
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_translate:
+elif active == 'translate':
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// TRANSLATE' if CLI else '🌐  TRANSLATE MESSAGE'}</div>", unsafe_allow_html=True)
     st.divider()
 
@@ -1358,10 +1354,7 @@ with tab_translate:
     st.divider()
     st.markdown("<div style='font-size:10px;color:#222;line-height:1.8;'>translate any message from chat → use it in conversation or hear it spoken</div>", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — SEARCH
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_search:
+elif active == 'search':
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// SEARCH CHAT' if CLI else '🔍  SEARCH CHAT HISTORY'}</div>", unsafe_allow_html=True)
     st.divider()
 
@@ -1400,10 +1393,7 @@ with tab_search:
         total = len(st.session_state.messages)
         st.markdown(f"<div style='color:#222;font-size:12px;padding:10px 0;'>{total} messages in history — type to search</div>", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — VOICE
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_voice:
+elif active == 'voice':
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// VOICE INPUT' if CLI else '🎤  VOICE INPUT'}</div>", unsafe_allow_html=True)
     st.divider()
 
@@ -1432,10 +1422,7 @@ with tab_voice:
             st.session_state.stt_result = ""
             st.success("sent! switch to 💬 CHAT tab")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 6 — UPLOAD
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_upload:
+elif active == 'upload':
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// FILE UPLOAD' if CLI else '📁  FILE & IMAGE UPLOAD'}</div>", unsafe_allow_html=True)
     st.divider()
 
@@ -1464,10 +1451,7 @@ with tab_upload:
                 st.session_state.total_messages += 1
                 st.success("attached! switch to 💬 CHAT")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 7 — STATS
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_stats:
+elif active == 'stats':
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// STATS' if CLI else '📊  SESSION STATS'}</div>", unsafe_allow_html=True)
     st.divider()
 
@@ -1504,10 +1488,7 @@ with tab_stats:
     else:
         st.markdown("<div style='color:#1e1e1e;font-size:12px;padding:30px 0;'>no data yet</div>", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 8 — FAVOURITES
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_favs:
+elif active == 'favs':
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// FAVOURITES' if CLI else '⭐  SAVED RESPONSES'}</div>", unsafe_allow_html=True)
     st.divider()
 
@@ -1520,10 +1501,7 @@ with tab_favs:
                 if st.button("REMOVE", key=f"del_fav_{i}"):
                     st.session_state.favourites.pop(i); st.rerun()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 9 — TEMPLATES  (Feature 15)
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_templates:
+elif active == 'templates':
     st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// PROMPT TEMPLATES' if CLI else '📋  PROMPT TEMPLATES LIBRARY'}</div>", unsafe_allow_html=True)
     st.markdown("<div style='font-size:11px;color:#333;margin-bottom:16px;letter-spacing:0.04em;'>click any template to load it into the editor below, fill in the placeholders, then send to chat</div>", unsafe_allow_html=True)
     st.divider()
@@ -1615,3 +1593,109 @@ with tab_templates:
         5. Or click <b>COPY AS SYSTEM PROMPT</b> to set it as the AI's persona
     </div>
     """, unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SETTINGS
+# ══════════════════════════════════════════════════════════════════════════════
+elif active == 'settings':
+    st.markdown(f"<div style='padding:20px 0 10px 0;font-size:1rem;font-weight:500;color:#e8e8e8;letter-spacing:0.06em;'>{'// SETTINGS' if CLI else '⚙️  Settings'}</div>", unsafe_allow_html=True)
+    st.divider()
+
+    col_l, col_r = st.columns([1.2, 1])
+
+    with col_l:
+        # ── API KEY ──────────────────────────────────────────────────────────
+        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>API KEY</div>", unsafe_allow_html=True)
+        new_api = st.text_input("API KEY", type="password",
+                                value=st.session_state.get("api_key_input",""),
+                                placeholder="paste sarvam api key...",
+                                label_visibility="collapsed",
+                                key="api_key_field")
+        if new_api != st.session_state.get("api_key_input",""):
+            st.session_state["api_key_input"] = new_api
+            st.toast("API key saved!", icon="🔑")
+
+        st.divider()
+
+        # ── SYSTEM PROMPT ────────────────────────────────────────────────────
+        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>SYSTEM PROMPT PRESET</div>", unsafe_allow_html=True)
+        preset_choice = st.selectbox("PRESET", list(PRESET_PROMPTS.keys()), label_visibility="collapsed", key="preset_sel")
+        st.text_area("SYSTEM PROMPT", value=PRESET_PROMPTS[preset_choice], height=100, key="sys_prompt_input")
+
+        st.divider()
+
+        # ── GENERATION ───────────────────────────────────────────────────────
+        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>GENERATION</div>", unsafe_allow_html=True)
+        sc1, sc2 = st.columns(2)
+        with sc1: st.slider("TEMPERATURE", 0.0, 1.0, 0.7, 0.05, key="temp_s")
+        with sc2: st.select_slider("MAX TOKENS", [256, 512, 1024, 2048], value=1024, key="tok_s")
+
+        sc3, sc4 = st.columns(2)
+        with sc3: st.toggle("STREAMING",         value=True, key="stream_t")
+        with sc4: st.toggle("AUTO TEXT-TO-SPEECH", value=True, key="tts_t")
+
+        st.selectbox("TTS LANGUAGE", list(LANG_CODES.keys()), index=list(LANG_CODES.keys()).index("Hindi"), key="tts_l")
+        st.selectbox("MIC LANGUAGE", list(LANG_CODES.keys()), key="stt_l")
+
+        st.divider()
+        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>MEMORY</div>", unsafe_allow_html=True)
+        st.toggle("AUTO SUMMARISE every 10 turns", value=True, key="mem_auto")
+
+    with col_r:
+        # ── ACCENT COLOUR ────────────────────────────────────────────────────
+        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>ACCENT COLOUR</div>", unsafe_allow_html=True)
+
+        swatch_html = "<div class='swatch-row'>"
+        for hex_val, name in ACCENT_PRESETS:
+            border = f"border-color:{hex_val}" if hex_val == st.session_state.accent else "border-color:#222"
+            swatch_html += f"<div class='swatch' style='background:{hex_val};{border};' title='{name}'></div>"
+        swatch_html += "</div>"
+        st.markdown(swatch_html, unsafe_allow_html=True)
+
+        swatch_cols = st.columns(len(ACCENT_PRESETS))
+        for i, (hex_val, name) in enumerate(ACCENT_PRESETS):
+            with swatch_cols[i]:
+                if st.button("●", key=f"sw_{i}", help=name):
+                    st.session_state.accent = hex_val
+                    st.rerun()
+
+        custom_col = st.text_input("CUSTOM HEX", value=st.session_state.accent, key="custom_hex", max_chars=7)
+        if st.button("APPLY COLOUR", key="apply_colour"):
+            if custom_col and custom_col.startswith("#") and len(custom_col) == 7:
+                st.session_state.accent = custom_col
+                st.rerun()
+            else:
+                st.error("enter a valid hex like #a1b2c3")
+
+        st.divider()
+
+        # ── INTERFACE MODE ───────────────────────────────────────────────────
+        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>INTERFACE MODE</div>", unsafe_allow_html=True)
+        cli_toggle = st.toggle("⌨️ CLI MODE", value=st.session_state.cli_mode, key="cli_toggle")
+        if cli_toggle != st.session_state.cli_mode:
+            st.session_state.cli_mode = cli_toggle
+            st.rerun()
+
+        if CLI:
+            st.markdown("""
+            <div style='font-size:10px;color:#333;margin-top:8px;letter-spacing:0.05em;line-height:1.8;'>
+                root@sarvam:~$<br>&gt; monospace font<br>&gt; sharp corners<br>&gt; terminal aesthetic
+            </div>""", unsafe_allow_html=True)
+
+        st.divider()
+
+        # ── MODEL INFO ───────────────────────────────────────────────────────
+        st.markdown("<div style='font-size:11px;color:#444;letter-spacing:0.06em;margin-bottom:6px;'>MODEL</div>", unsafe_allow_html=True)
+        st.selectbox("MODEL", ["sarvam-m"], key="model_sel")
+
+        st.divider()
+        st.markdown(f"""
+        <div style='font-size:10px;color:#222;line-height:1.9;'>
+            <b style='color:#333;'>Quick commands:</b><br>
+            <code>/help</code> — all commands<br>
+            <code>/translate Hindi</code> — translate last reply<br>
+            <code>/speak</code> — read aloud<br>
+            <code>/tldr</code> — one-line summary<br>
+            <code>/clear</code> — reset chat
+        </div>
+        """, unsafe_allow_html=True)
