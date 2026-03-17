@@ -383,12 +383,12 @@ audio {{
 SARVAM_BASE = "https://api.sarvam.ai/v1"
 
 PRESET_PROMPTS = {
-    "🤖 Default":      "You are a helpful, concise AI assistant.",
-    "💻 Coder":         "You are an expert programmer. Give clean, commented code. Prefer Python unless told otherwise.",
-    "🎓 Tutor":         "You are a patient tutor. Explain concepts step by step with analogies and examples.",
-    "✍️ Writer":        "You are a creative writing assistant. Be expressive, vivid, and imaginative.",
-    "🔬 Researcher":    "You are a research assistant. Be precise, cite reasoning, flag uncertainty.",
-    "😂 Comedian":      "You are a witty AI that always replies with clever humour and light sarcasm.",
+    "🤖 Default":      "You are a helpful, concise AI assistant. Always format your responses using HTML tags only — never use markdown syntax like ** or ##. Use <b> for bold, <i> for italic, <br> for line breaks, <ul><li> for lists, <table border='1'> for tables, <code> for inline code, <pre><code> for code blocks. Do not wrap responses in ```html``` blocks, just output raw HTML directly.",
+    "💻 Coder":        "You are an expert programmer. Always format responses in HTML. Use <pre><code> for all code blocks, <b> for key terms, <br> for spacing. Never use markdown.",
+    "🎓 Tutor":        "You are a patient tutor. Format all responses in HTML using <b> for key concepts, <ul><li> for steps, <br> for spacing. Never use markdown.",
+    "✍️ Writer":       "You are a creative writing assistant. Format responses in HTML using <b>, <i>, <br> tags. Never use markdown.",
+    "🔬 Researcher":   "You are a research assistant. Format responses in HTML using <b>, <ul><li>, <table> for structured data. Never use markdown.",
+    "😂 Comedian":     "You are a witty AI. Format responses in HTML using <b> and <i> for emphasis. Never use markdown.",
 }
 
 ACCENT_PRESETS = [
@@ -584,7 +584,7 @@ if st.session_state.show_settings:
         # Custom hex input
         custom_col = st.text_input("CUSTOM HEX", value=st.session_state.accent, key="custom_hex", max_chars=7)
         if st.button("APPLY COLOUR", key="apply_colour"):
-            if custom_col.startswith("#") and len(custom_col) == 7:
+            if custom_col and custom_col.startswith("#") and len(custom_col) == 7:
                 st.session_state.accent = custom_col
                 st.rerun()
             else:
@@ -621,15 +621,16 @@ if st.session_state.show_settings:
     st.markdown("</div>", unsafe_allow_html=True)
     st.divider()
 
-# Pull settings with safe fallbacks
-system_prompt = st.session_state.get("sys_prompt_input",  "You are a helpful, concise AI assistant.")
-temperature   = st.session_state.get("temp_s",            0.7)
-max_tokens    = st.session_state.get("tok_s",             1024)
-stream_mode   = st.session_state.get("stream_t",          True)
-tts_enabled   = st.session_state.get("tts_t",             False)
-tts_lang      = st.session_state.get("tts_l",             "English")
-stt_lang      = st.session_state.get("stt_l",             "English")
-mem_auto      = st.session_state.get("mem_auto",          True)
+# Pull settings with safe fallbacks — always defined regardless of settings panel state
+DEFAULT_PROMPT = PRESET_PROMPTS["🤖 Default"]
+system_prompt = st.session_state.get("sys_prompt_input") or DEFAULT_PROMPT
+temperature   = st.session_state.get("temp_s",   0.7)
+max_tokens    = st.session_state.get("tok_s",    1024)
+stream_mode   = st.session_state.get("stream_t", True)
+tts_enabled   = st.session_state.get("tts_t",    True)
+tts_lang      = st.session_state.get("tts_l",    "English")
+stt_lang      = st.session_state.get("stt_l",    "English")
+mem_auto      = st.session_state.get("mem_auto", True)
 
 # ─── TABS ──────────────────────────────────────────────────────────────────────
 tab_chat, tab_memory, tab_voice, tab_upload, tab_stats, tab_favs = st.tabs([
@@ -726,8 +727,8 @@ with tab_chat:
             sys_content = f"{system_prompt}\n\nContext from earlier in this conversation:\n{st.session_state.memory_summary}"
         else:
             sys_content = system_prompt
-        
-        # Prepend system content as first user message instead of system role
+
+        # Prepend system content as first user/assistant exchange (Sarvam rejects system role)
         first_msg = f"{sys_content}\n\n---\n\nLet's begin."
         messages_payload = [
             {"role": "user",      "content": first_msg},
@@ -738,7 +739,6 @@ with tab_chat:
                 if m.get("content", "").strip()
             ],
         ]
-        
 
         with st.chat_message("assistant", avatar="🤖"):
             if CLI: st.markdown(f"<div class='cli-prompt'>&gt;&gt; sarvam-m output:</div>", unsafe_allow_html=True)
@@ -769,7 +769,7 @@ with tab_chat:
                     if tts_enabled and api_key:
                         try:
                             ab = call_sarvam_tts(api_key, reply, LANG_CODES.get(tts_lang, "en-IN"))
-                            if ab: st.session_state.tts_audio = abs
+                            if ab: st.session_state.tts_audio = ab
                         except: pass
 
                     # Auto memory summarise every N turns
