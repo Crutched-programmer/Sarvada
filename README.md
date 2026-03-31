@@ -2,7 +2,10 @@
 
 A Streamlit-based chat interface powered by the Sarvam AI API. Sarvada provides a multi-session, feature-rich conversational agent with support for text-to-speech, speech-to-text, translation, memory compression, file uploads, prompt templates, and a set of inline slash commands — all in a single Python file.
 
+<img src='https://github.com/user-attachments/assets/7bc04165-7548-4673-beb9-c1556584d7be' />
+
 ---
+
 
 ## Table of Contents
 
