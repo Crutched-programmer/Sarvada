@@ -884,16 +884,22 @@ function countTokens(text) { return Math.max(1, Math.floor(text.split(/\s+/).len
 
 function renderMessages() {
   const c = curSess();
+  if (!c) return;
   const container = document.getElementById('chat-messages');
   const emptyState = document.getElementById('empty-state');
   const memBadge = document.getElementById('memory-badge');
+  const memWords = document.getElementById('memory-words');
 
-  if (c.memorySummary) {
-    memBadge.style.display = '';
-    document.getElementById('memory-words').textContent = c.memorySummary.split(/\s+/).length;
-  } else {
-    memBadge.style.display = 'none';
+  if (memBadge) {
+    if (c.memorySummary) {
+      memBadge.style.display = '';
+      if (memWords) memWords.textContent = c.memorySummary.split(/\s+/).length;
+    } else {
+      memBadge.style.display = 'none';
+    }
   }
+
+  if (!container || !emptyState) return;
 
   if (c.messages.length === 0) {
     container.innerHTML = '';
@@ -1209,7 +1215,7 @@ async function callTranslate(text, source, target) {
 }
 
 async function callTTS(text, langCode) {
-  const res = await fetch(`${SARVAM_BASE}/text-to-speech`, {
+  const res = await fetch('https://api.sarvam.ai/text-to-speech', {
     method:'POST',
     headers:{'api-subscription-key':state.apiKey,'Content-Type':'application/json'},
     body:JSON.stringify({inputs:[text.slice(0,500)],target_language_code:langCode,speaker:'meera',pitch:0,pace:1.0,loudness:1.5,speech_sample_rate:8000,enable_preprocessing:true,model:'bulbul:v1'})
