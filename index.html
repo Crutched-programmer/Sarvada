@@ -9,7 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   const SUPABASE_URL = 'https://hufjuvefjvjvmrxbpoet.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1Zmp1dmVmanZqdm1yeGJwb2V0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU5MTE2NTIsImV4cCI6MjA5MTQ4NzY1Mn0.xwnx_lyO2bPt9o6AFbrMHCgmNX9b0gqwi_zS2yu9cQM';
+  const SUPABASE_ANON_KEY = 'YOUR_PUBLISHABLE_KEY_HERE';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 </script>
 <style>
@@ -691,9 +691,9 @@ let state = {
 
 // init first session — only used before Supabase loads
 function newSession(name) {
-  const id = ++state.sessionCounter;
+  const id = 'local_' + (++state.sessionCounter);
   state.sessions[id] = {
-    name: name || `Chat ${id}`,
+    name: name || `Chat ${state.sessionCounter}`,
     messages: [],
     tokenHistory: [],
     memorySummary: '',
@@ -817,14 +817,14 @@ function renderSessions() {
   Object.entries(sess).forEach(([id, s]) => {
     const row = document.createElement('div');
     row.className = 'session-row';
-    const isActive = parseInt(id) === cur;
+    const isActive = id === cur;
     const btn = document.createElement('button');
     btn.className = 'session-btn' + (isActive ? ' active' : '');
     btn.textContent = `${isActive ? '▶ ' : ''}${s.name} (${s.messages.length})`;
     btn.onclick = async () => {
       if (!isActive) {
         await saveCurrentSession();
-        state.activeSession = parseInt(id);
+        state.activeSession = id;
         renderAll();
       }
     };
@@ -836,10 +836,10 @@ function renderSessions() {
       del.onclick = async () => {
         const dbId = s.dbId;
         if (isActive) {
-          const other = Object.keys(sess).find(k => parseInt(k) !== cur);
-          if (other) state.activeSession = parseInt(other);
+          const other = Object.keys(sess).find(k => k !== id);
+          if (other) state.activeSession = other;
         }
-        delete state.sessions[parseInt(id)];
+        delete state.sessions[id];
         await deleteSessionFromDB(dbId);
         renderAll();
       };
@@ -877,7 +877,19 @@ function stripTags(html) {
 }
 
 function stripThink(text) {
-  return text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*/g, '').trim();
+  // Remove complete <think>...</think> blocks
+  let result = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  // If nothing left, try extracting text after the closing think tag
+  if (!result) {
+    const match = text.match(/<\/think>([\s\S]*)/i);
+    if (match) result = match[1].trim();
+  }
+  // If still nothing (unclosed think tag with no real content yet), strip from <think> onward
+  if (!result) {
+    result = text.replace(/<think>[\s\S]*/gi, '').trim();
+  }
+  // Last resort — just return the raw text so something always shows
+  return result || text.trim();
 }
 
 function countTokens(text) { return Math.max(1, Math.floor(text.split(/\s+/).length * 4 / 3)); }
@@ -926,7 +938,9 @@ function renderMessages() {
       wrap.style.flex = '1';
       const bubble = document.createElement('div');
       bubble.className = 'bubble-assistant';
-      bubble.innerHTML = msg.content;
+      // if content has no HTML tags, treat as plain text and convert newlines to <br>
+      const hasHTML = /<[a-z][\s\S]*>/i.test(msg.content);
+      bubble.innerHTML = hasHTML ? msg.content : msg.content.replace(/\n/g, '<br>');
       const actions = document.createElement('div');
       actions.className = 'msg-actions';
       actions.innerHTML = `
@@ -1808,7 +1822,6 @@ async function loadUserSessions() {
   try {
     const { data, error } = await sb.from('chat_sessions').select('*').order('created_at');
     if (error || !data || !data.length) {
-      // no sessions yet — create a default one
       const id = newSession('Chat 1');
       state.activeSession = id;
       await saveCurrentSession();
@@ -1816,9 +1829,9 @@ async function loadUserSessions() {
     }
     state.sessions = {};
     state.sessionCounter = data.length;
-    data.forEach((row, i) => {
-      const localId = i + 1;
-      state.sessions[localId] = {
+    data.forEach(row => {
+      // use the DB uuid as the local key — guaranteed unique, no collisions
+      state.sessions[row.id] = {
         name:           row.name,
         messages:       row.messages || [],
         tokenHistory:   row.token_history || [],
@@ -1828,7 +1841,8 @@ async function loadUserSessions() {
         dbId:           row.id,
       };
     });
-    state.activeSession = 1;
+    // set active to first session
+    state.activeSession = Object.keys(state.sessions)[0];
   } catch(e) { console.warn('loadUserSessions:', e); }
 }
 
