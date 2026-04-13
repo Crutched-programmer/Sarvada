@@ -1214,7 +1214,11 @@ async function callSarvamChat(messages) {
     throw new Error(`${res.status}: ${txt || res.statusText}`);
   }
   const data = await res.json();
-  return stripThink(data.choices[0].message.content);
+  const raw = data.choices[0].message.content;
+  const cleaned = stripThink(raw);
+  console.log('[Sarvada] raw:', raw.slice(0,200));
+  console.log('[Sarvada] cleaned:', cleaned.slice(0,200));
+  return cleaned || '(no response)';
 }
 
 async function callTranslate(text, source, target) {
