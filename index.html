@@ -9,7 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   const SUPABASE_URL = 'https://hufjuvefjvjvmrxbpoet.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1Zmp1dmVmanZqdm1yeGJwb2V0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU5MTE2NTIsImV4cCI6MjA5MTQ4NzY1Mn0.xwnx_lyO2bPt9o6AFbrMHCgmNX9b0gqwi_zS2yu9cQM';
+  const SUPABASE_ANON_KEY = 'YOUR_PUBLISHABLE_KEY_HERE';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 </script>
 <style>
@@ -605,12 +605,12 @@ const LANG_NAMES = {
 };
 
 const PRESET_PROMPTS = {
-  '🤖 Default': "You are a helpful, concise AI assistant. Always format your responses using HTML tags only — never use markdown syntax like ** or ##. Use <b> for bold, <i> for italic, <br> for line breaks, <ul><li> for lists, <table border='1'> for tables, <code> for inline code, <pre><code> for code blocks. Do not wrap responses in ```html``` blocks, just output raw HTML directly.",
-  '💻 Coder': "You are an expert programmer. Always format responses in HTML. Use <pre><code> for all code blocks, <b> for key terms, <br> for spacing. Never use markdown.",
-  '🎓 Tutor': "You are a patient tutor. Format all responses in HTML using <b> for key concepts, <ul><li> for steps, <br> for spacing. Never use markdown.",
-  '✍️ Writer': "You are a creative writing assistant. Format responses in HTML using <b>, <i>, <br> tags. Never use markdown.",
-  '🔬 Researcher': "You are a research assistant. Format responses in HTML using <b>, <ul><li>, <table> for structured data. Never use markdown.",
-  '😂 Comedian': "You are a witty AI. Format responses in HTML using <b> and <i> for emphasis. Never use markdown."
+  '🤖 Default': "You are a helpful, concise AI assistant. Respond clearly and directly. Keep responses well-structured using plain text. Use line breaks to separate ideas.",
+  '💻 Coder': "You are an expert programmer. Provide clear, working code with brief explanations. Use code blocks for all code.",
+  '🎓 Tutor': "You are a patient tutor. Explain concepts clearly with examples and step-by-step breakdowns.",
+  '✍️ Writer': "You are a creative writing assistant. Help with writing, editing, and storytelling.",
+  '🔬 Researcher': "You are a research assistant. Provide accurate, well-structured information with key points clearly highlighted.",
+  '😂 Comedian': "You are a witty AI with a great sense of humor. Be funny, clever, and entertaining while still being helpful."
 };
 
 const ACCENT_PRESETS = [
@@ -877,19 +877,19 @@ function stripTags(html) {
 }
 
 function stripThink(text) {
-  // Remove complete <think>...</think> blocks
+  if (!text) return '';
+  // Case 1: properly closed <think>...</think> — remove the whole block
   let result = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-  // If nothing left, try extracting text after the closing think tag
-  if (!result) {
-    const match = text.match(/<\/think>([\s\S]*)/i);
-    if (match) result = match[1].trim();
-  }
-  // If still nothing (unclosed think tag with no real content yet), strip from <think> onward
-  if (!result) {
-    result = text.replace(/<think>[\s\S]*/gi, '').trim();
-  }
-  // Last resort — just return the raw text so something always shows
-  return result || text.trim();
+  if (result) return result;
+  // Case 2: unclosed <think> — everything after it is thinking, real reply is before it
+  const thinkStart = text.toLowerCase().indexOf('<think>');
+  if (thinkStart > 0) return text.slice(0, thinkStart).trim();
+  // Case 3: starts with <think> and never closes — look for </think> manually
+  const closeTag = text.toLowerCase().indexOf('</think>');
+  if (closeTag !== -1) return text.slice(closeTag + 8).trim();
+  // Case 4: entire response is inside think block with no real reply — strip think tag and return remainder
+  if (thinkStart === 0) return '';
+  return text.trim();
 }
 
 function countTokens(text) { return Math.max(1, Math.floor(text.split(/\s+/).length * 4 / 3)); }
@@ -1088,18 +1088,13 @@ async function sendMessage(prompt) {
     }))
   ];
 
+  let reply = '';
   try {
-    const reply = await callSarvamChat(payload);
+    reply = await callSarvamChat(payload);
     c.messages.push({role:'assistant', content: reply});
     c.totalMessages++;
-
-    // approximate token history
     c.tokenHistory.push({turn: Math.floor(c.messages.length/2), tokens: countTokens(reply) + countTokens(prompt)});
-
-    // auto TTS
     if (state.autoTTS && state.apiKey) { doTTS(stripTags(reply)).catch(()=>{}); }
-
-    // auto memory
     const turns = Math.floor(c.messages.length / 2);
     if (state.memAuto && state.apiKey && turns > 0 && turns % 10 === 0 && turns !== c.lastSummarised) {
       try {
@@ -1111,7 +1106,8 @@ async function sendMessage(prompt) {
     c.messages.push({role:'assistant', content: `<span style="color:#f55">❌ ${e.message}</span>`});
   }
 
-  shimDiv.remove();
+  // remove shimmer FIRST, then re-render so messages container is clean
+  if (shimDiv.parentNode) shimDiv.remove();
   renderMessages();
   scrollChat();
   renderSessions();
