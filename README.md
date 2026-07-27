@@ -6,7 +6,7 @@ A Streamlit-based chat interface powered by the Sarvam AI API. Sarvada provides 
 
 ---
 
-
+I have a folder for MK4 aiming at a dadtabase infrastucture for supporting profiles and account sync...It is still in development so use the code in the MK3 folder itself.
 ## Table of Contents
 
 - [Requirements](#requirements)
